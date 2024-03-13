@@ -13,6 +13,7 @@ from model.models import Weather, Base
 import logging as log
 import requests
 import os
+import pandas as pd
 
 load_dotenv()
 
@@ -20,60 +21,60 @@ engine = create_engine(f"redshift+psycopg2://{os.getenv('user')}:{os.getenv('pas
 Session = sessionmaker(bind=engine)
 session = Session()
 
-with DAG(dag_id="weather", start_date=datetime(2024, 3, 1), schedule_interval="*/10 * * * *") as dag:
+with DAG(dag_id="weather", start_date=datetime(2024, 3, 1), schedule_interval="@daily", default_args={'retries': 0}) as dag:
     weather = BashOperator(task_id="weather", bash_command="echo weather")
 
     def tranform_weather(weather_data):
         try:
+            # Extracción de los datos como antes
             log.info(weather_data)
-            date_time = weather_data.get('properties').get('timeseries')[0].get('time')
+            date_time_str = weather_data.get('properties').get('timeseries')[0].get('time')
             data_instant = weather_data.get('properties').get('timeseries')[0].get('data').get('instant').get('details')
             air_temperature = data_instant.get('air_temperature')
             cloud_area_fraction = data_instant.get('cloud_area_fraction')
-            print(f"Date and time: {date_time}")
-            print(f"Air temperature: {air_temperature}")
-            print(f"Cloud area fraction: {cloud_area_fraction}")
 
-            conn = psycopg2.connect(
-                dbname=os.getenv('dbname'),
-                user=os.getenv('user'),
-                password=os.getenv('password'),
-                host=os.getenv('host'),
-                port=os.getenv('port')
-            )
-            cursor = conn.cursor()
+            # Convierte la cadena de tiempo a un objeto datetime
+            date_time = datetime.strptime(date_time_str, '%Y-%m-%dT%H:%M:%SZ')
 
-            insert_query = """
-            INSERT INTO weather (city, country, latitude, longitude, temperature, humidity, wind_speed, cloudiness, date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
-            """
-            
-            # Valores a insertar
-            data = (
-                'CDMX', 'MX', 19.42847, -99.12766, air_temperature, 0, 0, cloud_area_fraction, date_time
-            )
-            cursor.execute(insert_query, data)
-            conn.commit()
-            cursor.close()
-            conn.close()
+            # Prepara el DataFrame para insertar
+            df_to_insert = pd.DataFrame({
+                'city': ['CDMX'],
+                'country': ['MX'],
+                'latitude': [19.42847],
+                'longitude': [-99.12766],
+                'temperature': [air_temperature],
+                'humidity': [0], 
+                'wind_speed': [0],
+                'cloudiness': [cloud_area_fraction],
+                'date': [date_time]
+            })
 
-            weather_records = session.query(Weather).all()
-            for record in weather_records:
-                print(str(record.city),str(record.temperature))
-            return date_time
+            query = "SELECT city, country, date FROM weather;"
+            existing_data = pd.read_sql_query(query, engine)
+
+            new_data = pd.merge(df_to_insert, existing_data, on=['city', 'country', 'date'], how='left', indicator=True)
+            new_data = new_data[new_data['_merge'] == 'left_only'].drop('_merge', axis=1)
+
+            if not new_data.empty:
+                new_data.to_sql('weather', engine, index=False, if_exists='append')
+                log.info(f"{len(new_data)} nuevos registros insertados.")
+            else:
+                log.info("No hay nuevos registros para insertar.")
+
         except Exception as err:
-            print(err)
             log.error(f"An error occurred: {err}")
-
 
     @task()
     def fetch_weather():
         try:
             api_key = os.getenv("url")
-            print(api_key)
+            url = f"{api_key}/locationforecast/2.0/compact.json"
+            params = {'lat':'19.42847','lon':'-99.12766'}
             if not api_key:
                 raise ValueError("API key not found")
-            response = requests.get(f'{api_key}/locationforecast/2.0/compact.json?lat=19.42847&lon=-99.12766',timeout=10)
+            print('huevos esta es la URL:', url)
+            response = requests.get(url, params=params, timeout=10)
+            print('huevos' ,response)
             response.raise_for_status()
             tranform_weather(response.json())
             return response.json()
@@ -83,5 +84,5 @@ with DAG(dag_id="weather", start_date=datetime(2024, 3, 1), schedule_interval="*
         except Exception as err:
             print(f"An error occurred: {err}")
             log.error(f"An error occurred: {err}")
-    
-    fetch_weather() >> weather
+
+fetch_weather()>>weather

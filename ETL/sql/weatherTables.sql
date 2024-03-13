@@ -1,5 +1,6 @@
 -- CREAMOS LA TABLA PARA GUARDAR LOS DATOS DE LA API DE WEATHER SQL
 CREATE TABLE IF NOT EXISTS jrobertoperezangulo_ipn_coderhouse.weather (
+    id SERIAL PRIMARY KEY NOT NULL
     city VARCHAR(100),
     country VARCHAR(100),
     latitude FLOAT,
