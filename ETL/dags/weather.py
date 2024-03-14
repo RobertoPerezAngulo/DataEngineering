@@ -48,9 +48,17 @@ with DAG(dag_id="weather", start_date=datetime(2024, 3, 1), schedule_interval="@
                 'cloudiness': [cloud_area_fraction],
                 'date': [date_time]
             })
+            
+            # Convert 'date' column to datetime in df_to_insert DataFrame
+            df_to_insert['date'] = pd.to_datetime(df_to_insert['date'])
 
             query = "SELECT city, country, date FROM weather;"
             existing_data = pd.read_sql_query(query, engine)
+
+            # Convert 'date' column to datetime in existing_data DataFrame
+            existing_data['date'] = pd.to_datetime(existing_data['date'])
+
+            print('huevos este es el existing_data:', existing_data)
 
             new_data = pd.merge(df_to_insert, existing_data, on=['city', 'country', 'date'], how='left', indicator=True)
             new_data = new_data[new_data['_merge'] == 'left_only'].drop('_merge', axis=1)
@@ -70,11 +78,11 @@ with DAG(dag_id="weather", start_date=datetime(2024, 3, 1), schedule_interval="@
             api_key = os.getenv("url")
             url = f"{api_key}/locationforecast/2.0/compact.json"
             params = {'lat':'19.42847','lon':'-99.12766'}
+            payload = {}
+            headers = {}
             if not api_key:
                 raise ValueError("API key not found")
-            print('huevos esta es la URL:', url)
-            response = requests.get(url, params=params, timeout=10)
-            print('huevos' ,response)
+            response = requests.request("GET", url, headers=headers, data=payload, params=params, timeout=10)
             response.raise_for_status()
             tranform_weather(response.json())
             return response.json()
